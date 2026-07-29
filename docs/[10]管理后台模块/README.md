@@ -519,7 +519,7 @@ flowchart TB
 | [06] AI网关模块 | 内部接口 | 渠道的增删改查、启用停用 |
 | [09] 插件与技能模块 | 内部接口 | 技能上下架、第三方插件注册 |
 | [08] API入口与中间件模块 | 中间件链 | AuthMiddleware → AdminMiddleware 两层鉴权 |
-| [11] 基础设施模块 | 数据库/Redis | 基础设施提供 DB 和 Redis 连接 |
+| — | 数据库/Redis | 本模块自行管理 DB 连接池和 Redis 客户端 |
 
 ---
 
@@ -605,4 +605,4 @@ flowchart TB
 | [05] 计费与支付模块 | 配额调整需要 [05] 暴露 `GrantCredits` 和 `GetBalance` 内部接口 | 高 |
 | [06] AI网关模块 | 渠道管理需要 [06] 暴露渠道 CRUD 和 toggle 内部接口 | 中 |
 | [09] 插件与技能模块 | 技能/插件管理需要 [09] 暴露管理接口（创建/编辑/上下架） | 中 |
-| [11] 基础设施模块 | DB 迁移脚本需包含 admins 和 operation_logs 建表 + 初始 super_admin 插入 | 中 |
+| — | DB 建表脚本需包含 admins 和 operation_logs 建表 + 初始 super_admin 插入 | 中 |

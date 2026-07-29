@@ -19,10 +19,14 @@ x-media 是一个面向影视/短剧/广告场景的 AI 视频工作台。用户
 
 ## 2. 你将用到的参考项目
 
-- `D:\GoWorkSpace\open-ai-canvas`：画布、后端、Agent 的工程参考
-- `D:\GoWorkSpace\gogo_trade`：分域拆解风格参考
+| 参考项目 | 用途 |
+|----------|------|
+| `D:\GoWorkSpace\open-ai-canvas` | 后端、Agent、业务模块的架构参考（基于 [basketikun/infinite-canvas](https://github.com/basketikun/infinite-canvas) 二次开发） |
+| [basketikun/infinite-canvas](https://github.com/basketikun/infinite-canvas) | **画布前端直接上游**——无限画布、节点拖拽、插件系统、Agent 助手，竞品和我们共用此上游 |
+| `D:\GoWorkSpace\gogo_trade` | 文档分域拆解风格参考 |
 
-注意：业务逻辑不要照抄参考项目，仅参考架构与模块划分。
+> 画布前端直接基于 **infinite-canvas** 开发，不再通过 open-ai-canvas 间接引用。
+> 后端业务逻辑参考 open-ai-canvas 的模块划分，不照抄。
 
 ---
 
@@ -31,7 +35,7 @@ x-media 是一个面向影视/短剧/广告场景的 AI 视频工作台。用户
 建议按以下顺序阅读模块文档：
 
 1. `module-map.md`：总览与依赖关系
-2. `ai-canvas-video-design.md`：核心流程与总体架构
+2. `项目调研和参考/tapNow.md`：产品调研、核心流程与总体架构
 3. `[00]用户模块/README.md`
 4. `[01]素材模块/README.md`
 5. `[02]画布模块/README.md`
@@ -43,7 +47,6 @@ x-media 是一个面向影视/短剧/广告场景的 AI 视频工作台。用户
 11. `[08]API入口与中间件模块/README.md`
 12. `[09]插件与技能模块/README.md`
 13. `[10]管理后台模块/README.md`
-14. `[11]基础设施模块/README.md`
 
 ---
 
@@ -60,7 +63,7 @@ x-media 是一个面向影视/短剧/广告场景的 AI 视频工作台。用户
 ### 4.2 本地启动（推荐先用 Docker）
 
 ```bash
-cd D:\GoWorkSpace\open-ai-canvas
+cd D:\GoWorkSpace\infinite-canvas
 docker compose -f docker-compose.local.yml up -d --build
 ```
 
@@ -71,10 +74,10 @@ cd D:\GoWorkSpace\open-ai-canvas\backend
 go run ./cmd/server
 ```
 
-### 4.4 前端本地启动
+### 4.4 前端本地启动（基于 infinite-canvas）
 
 ```bash
-cd D:\GoWorkSpace\open-ai-canvas\web
+cd D:\GoWorkSpace\infinite-canvas\web
 bun install
 bun run dev
 ```
@@ -87,7 +90,7 @@ bun run dev
 | -- | -- | -- |
 | 用户模块 | `internal/user` | `open-ai-canvas/backend/internal` |
 | 素材模块 | `internal/asset` | `open-ai-canvas/backend/internal` |
-| 画布模块 | `web/src/modules/canvas` | `open-ai-canvas/web/src` |
+| 画布模块 | `web/src/modules/canvas` | `infinite-canvas/web/src`（前端直接上游） |
 | Agent策略模块 | `internal/agent` | `open-ai-canvas/canvas-agent` |
 | 任务调度模块 | `internal/task` | `open-ai-canvas/backend/internal` |
 | 计费与支付模块 | `internal/quota` | 参考策略配置 |
@@ -110,7 +113,7 @@ bun run dev
 ## 7. 常见问题
 
 Q: 前端画布从哪开始看？
-A: 先看 `open-ai-canvas/web/src/components/canvas`，再对照 `[02]画布模块/README.md`
+A: 先看 `infinite-canvas/web/src/components/canvas`，再对照 `[02]画布模块/README.md`
 
 Q: 后端任务队列怎么理解？
 A: 先看 `open-ai-canvas/backend/internal`，再对照 `[04]任务调度模块/README.md`

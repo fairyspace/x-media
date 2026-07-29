@@ -459,7 +459,7 @@ flowchart TD
 |------|----------|------|
 | [00]用户模块 | 共享 DB（读 `pms_user.status`） | 鉴权时检查用户是否被封禁 |
 | [10]管理后台模块 | 共享 DB（`system_configs.updated_by` → `admins.id`） | 记录配置是谁改的 |
-| [11]基础设施模块 | Redis + PostgreSQL | 会话存储、限流计数器、配置缓存、审计日志落库 |
+| — | Redis + PostgreSQL | 本模块自行管理 DB 连接池和 Redis 客户端，不依赖其他模块 |
 | 所有业务模块 | HTTP 路由转发 | 按 URL 前缀将请求转发到对应模块 |
 
 ---
@@ -543,7 +543,7 @@ flowchart TD
 | `[00]用户模块` | AuthMiddleware 依赖 `pms_user.status` 字段判断封禁状态 | P0 |
 | `[00]用户模块` | 鉴权中间件中的 Token → user_id 映射格式与用户模块的 session 存储格式对齐 | P0 |
 | `[10]管理后台模块` | `system_configs.updated_by` 引用 `admins.id`，需确认外键 | P1 |
-| `[11]基础设施模块` | Redis 需要 3 类 key 前缀：`session:`、`ratelimit:`、`config:`——部署时确认内存配额 | P0 |
-| `[11]基础设施模块` | `request_audits` 按天分区的定时任务需要数据库支持 | P1 |
+| — | Redis 需要 3 类 key 前缀：`session:`、`ratelimit:`、`config:`——部署时确认内存配额 | P0 |
+| — | `request_audits` 按天分区的定时任务需要数据库支持 | P1 |
 | 所有业务模块 | 统一的 `user_id` 注入方式（context key 名称约定）必须在所有模块中保持一致 | P0 |
 | 所有业务模块 | 限流会返回 429，前端需要处理 `Retry-After` 响应头并做友好提示 | P1 |

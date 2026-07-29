@@ -14,9 +14,10 @@ Created: 2026-07-29 | Status: Draft Updated: 2026-07-29 — 重构为关系型�
 - 分镜/时间轴：视频分镜的有序排列与预览
 - 与素材、Agent、任务模块联动
 
-> **与 open-ai-canvas 的核心差异**：open-ai-canvas 把整张画布存成一个 JSON blob（`PayloadJSON`），简单但无法单独查询某个节点。
-> x-media 做视频创作需要追踪每个节点的 AI 任务状态、素材引用关系，所以采用 **关系型节点表**，每个节点一行，支持按类型、状态、素材
-> ID 检索。
+> **画布前端基于 [basketikun/infinite-canvas](https://github.com/basketikun/infinite-canvas)**——与竞品 open-ai-canvas 共用同一上游，我们的后端在它的基础上改造。
+> 
+> **与上游的核心差异**：infinite-canvas / open-ai-canvas 把整张画布存成一个 JSON blob（`PayloadJSON`），简单但无法单独查询某个节点。
+> x-media 做视频创作需要追踪每个节点的 AI 任务状态、素材引用关系，所以采用 **关系型节点表**，每个节点一行，支持按类型、状态、素材 ID 检索。
 
 ---
 
@@ -719,9 +720,11 @@ MVP 阶段 **不处理多用户并发编辑**（项目同一时间只能由一�
 
 ---
 
-## 5. 与 open-ai-canvas 竞品对比
+## 5. 与 infinite-canvas / open-ai-canvas 竞品对比
 
-| 维度         | open-ai-canvas（竞品）              | x-media（我们）                       | 评价                          |
+> 竞品 open-ai-canvas 基于 [infinite-canvas](https://github.com/basketikun/infinite-canvas) 二次开发，我们与竞品共用同一画布上游。
+
+| 维度         | infinite-canvas / open-ai-canvas（竞品） | x-media（我们）                       | 评价                          |
 |--------------|-------------------------------------|---------------------------------------|-------------------------------|
 | 存储模式     | 文档型——整张画布一个 JSON blob      | 关系型——每节点一行                    | ✅ 更适合视频创作的节点级追踪 |
 | Project 模型 | CanvasProject 独立于 Project        | pms_canvas_project 合二为一           | ✅ 更简单                     |

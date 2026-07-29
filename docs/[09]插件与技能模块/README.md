@@ -481,9 +481,9 @@ flowchart TB
 - **PromptRenderer** 封装 `text/template`，负责将用户输入填入模板。额外做安全校验：防止 Prompt 注入攻击（如用户输入中包含 `{{}}` 试图注入模板语法 → 自动转义）。
 - 技能执行本身**不直接调用 AI 模型**，而是将渲染后的 Prompt 提交给 `[03]Agent策略模块`，由 Agent 模块负责调用 AI 网关和模型路由。插件与技能模块只管「组织输入、编排流程、处理结果」。
 
-参考 open-ai-canvas：
-- 插件目录：`D:\GoWorkSpace\open-ai-canvas\plugins\infinite-canvas`
-- open-ai-canvas 的插件系统是基于目录扫描的本地插件，x-media 扩展为 DB 驱动 + 支持第三方 Webhook。
+参考 infinite-canvas：
+- 插件目录：`D:\GoWorkSpace\infinite-canvas\plugins`
+- infinite-canvas 的插件系统是基于目录扫描的本地插件，x-media 扩展为 DB 驱动 + 支持第三方 Webhook。
 
 ---
 
