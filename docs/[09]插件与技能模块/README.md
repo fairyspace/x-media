@@ -541,41 +541,58 @@ flowchart TB
 
 ### 4.1 PluginRegistry 注册机制
 
-内置插件在 `init()` 中注册：
+内置插件在进程启动时通过 `init()` 注册到 PluginRegistry；第三方插件运行时从 DB 加载，按需创建对应的 WebhookExecutor。
 
-```go
-// 伪代码：不生成 Go 源码，仅表达实现思路
-func init() {
-    PluginRegistry.Register(&Plugin{
-        Name:        "builtin_image_gen",
-        DisplayName: "图片生成引擎",
-        Type:        "builtin",
-        Executor:    &ImageGenExecutor{},  // 实现 PluginExecutor 接口
-    })
-}
+```mermaid
+flowchart TB
+    A[进程启动]
+    B[执行各包 init 函数]
+    C[内置插件调用<br/>PluginRegistry.Register]
+    D["写入插件表项：<br/>name=内置ID, type=builtin"]
+    E["Executor 指向具体实现<br/>(ImageGenExecutor 等)"]
+    F[PluginRegistry 内存表就绪]
+    G[HTTP 服务开始接收请求]
+    H[首次调用第三方插件]
+    I[查 pms_plugin 表<br/>WHERE type=third_party]
+    J[读 auth_config 字段<br/>解密 API Key]
+    K["创建 WebhookExecutor<br/>缓存到 Registry"]
+    L[Executor 准备就绪<br/>可被技能调用]
+
+    A --> B --> C --> D --> E --> F --> G
+    G --> H --> I --> J --> K --> L
 ```
 
-运行时从 DB 加载 `type='third_party'` 的插件，为每个创建对应的 `WebhookExecutor`。
+注册时机要点：
+
+- **内置插件**：编译期就确定，启动即注册，无需 DB 数据
+- **第三方插件**：懒加载——首次有技能调用时才查 DB、解密 Key、实例化 Executor，之后缓存复用
+- **Registry 本质**是 `map[plugin_name]PluginExecutor`，线程安全（读写锁）
 
 ### 4.2 Prompt 渲染与防注入
 
-```go
-// 伪代码：不生成 Go 源码，仅表达实现思路
-// 1. 先对用户输入中的 {{ 和 }} 做转义，防止 Prompt 注入
-// 2. 使用 text/template 渲染模板
-// 3. 渲染后做长度限制（单次 Prompt 不超过 8000 字符）
-func RenderPrompt(template string, input map[string]interface{}) (string, error) {
-    sanitized := sanitizeInput(input)  // 转义 {{ }}
-    tmpl, _ := template.New("prompt").Parse(template)
-    var buf bytes.Buffer
-    tmpl.Execute(&buf, sanitized)
-    result := buf.String()
-    if len(result) > 8000 {
-        return "", ErrPromptTooLong
-    }
-    return result, nil
-}
+模板渲染顺序：**转义 → 渲染 → 限长**。三步必须串行，缺一不可。
+
+```mermaid
+flowchart LR
+    A[用户输入<br/>input_params]
+    B["转义阶段<br/>把输入里的 {{ 和 }}<br/>替换为安全占位符"]
+    C["渲染阶段<br/>用 text/template 引擎<br/>把模板填入转义后的输入"]
+    D["限长阶段<br/>检查渲染结果<br/>是否超过 8000 字符"]
+    E[返回渲染后 Prompt]
+    F[返回 ErrPromptTooLong]
+
+    A --> B --> C --> D
+    D -- 未超 --> E
+    D -- 超长 --> F
 ```
+
+防注入要点：
+
+| 步骤 | 做什么 | 为什么 |
+|------|--------|--------|
+| 转义 | 替换用户输入中的 `{{` `}}` | 防止用户构造 `{{.SystemPrompt}}` 之类的模板语法窃取内部提示词 |
+| 渲染 | 标准模板引擎执行 | 把定义好的变量填到模板对应槽位 |
+| 限长 | 拒绝 >8000 字符的输出 | 避免用户用超长 Prompt 拖垮下游模型 API（成本/超时） |
 
 ### 4.3 第三方插件 API Key 加密
 
@@ -599,16 +616,16 @@ func RenderPrompt(template string, input map[string]interface{}) (string, error)
 
 ## 5. 依赖模块
 
-| 模块 | 依赖方式 | 依赖说明 |
-|------|----------|----------|
-| [03] Agent策略模块 | HTTP/gRPC 调用 | 执行 AI Prompt，获取生成结果 |
-| [06] AI网关模块 | 间接（通过 [03]） | Agent 调用 AI 网关，插件与技能模块不直接感知具体模型 |
-| [02] 画布模块 | 内部接口调用 | 执行成功后异步回写生成结果到画布节点 |
-| [05] 计费与支付模块 | HTTP/gRPC 调用 | 执行前预占配额，成功后确认扣减，失败后释放预占 |
-| [08] API入口与中间件模块 | 中间件依赖 | 鉴权通过后注入 user_id 到 context |
-| [04] 任务调度模块 | HTTP/gRPC 调用 | 技能执行本质上是创建一个异步任务 |
-| [07] 存储模块 | 文件上传 | 生成的媒体文件上传到 OSS/COS，获取 output_url |
-| [10] 管理后台模块 | 接口暴露 | 插件管理和技能管理的管理后台接口 |
+| 模块 | 接口路径 | 用途 |
+|------|----------|------|
+| [03] Agent策略模块 | `POST /api/v1/agent/spec/{id}/submit` | 执行 AI Prompt，获取生成结果 |
+| [06] AI网关模块 | 间接（通过 [03] 调用 `POST /api/v1/gateway/invoke`） | 不直接感知具体模型 |
+| [02] 画布模块 | `POST /internal/projects/{id}/nodes` | 执行成功后异步回写生成结果到画布节点 |
+| [05] 计费与支付模块 | `POST /internal/v1/quota/reserve` / `settle` / `refund` | 预占/扣减/释放 |
+| [08] API入口与中间件模块 | 中间件链：AuthMiddleware 注入 `user_id` 到 context | 鉴权 |
+| [04] 任务调度模块 | `POST /api/v1/tasks` | 技能执行本质上是创建一个异步任务 |
+| [07] 存储模块 | `POST /api/v1/storage/upload-url` | 生成的媒体文件上传到 OSS |
+| [10] 管理后台模块 | `POST /api/v1/admin/plugins/*` 等 | 插件管理和技能管理的管理后台接口 |
 
 ---
 
@@ -692,8 +709,8 @@ func RenderPrompt(template string, input map[string]interface{}) (string, error)
 | 影响模块 | 影响说明 | 优先级 |
 |----------|----------|--------|
 | [03] Agent策略模块 | 技能执行会将渲染后的 Prompt 提交给 Agent，Agent 需要暴露统一的任务提交接口 | 高 |
-| [05] 计费与支付模块 | 每次技能执行前需预占配额、成功后确认扣减，计费模块需提供 `ReserveQuota` / `CommitQuota` / `ReleaseQuota` 三个接口 | 高 |
-| [02] 画布模块 | 生成结果需要回写到画布节点，画布模块需提供 `WriteNodeResult(nodeId, outputUrls)` 内部接口 | 中 |
+| [05] 计费与支付模块 | 每次技能执行前需预占配额、成功后确认扣减，计费模块需提供 `POST /internal/v1/quota/reserve` / `settle` / `refund` 三个接口 | 高 |
+| [02] 画布模块 | 生成结果需要回写到画布节点，画布模块需提供 `POST /internal/projects/{id}/nodes` 内部接口 | 中 |
 | [04] 任务调度模块 | 技能执行在任务调度模块创建异步任务，需统一 task 模型 | 中 |
 | [10] 管理后台模块 | 插件的增删改查、技能上下架等管理功能放在管理后台 | 中 |
 | [07] 存储模块 | 生成的媒体文件需上传到 OSS/COS 获取 URL | 低 |

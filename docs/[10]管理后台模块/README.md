@@ -301,7 +301,7 @@ sequenceDiagram
 - 后台鉴权是**两层校验**：第一层 `AuthMiddleware` 确认是合法登录用户，第二层 `AdminMiddleware` 确认是管理员且权限足够。两层任一失败都返回 403。
 - 封禁用户时**同时删除 Redis session**，确保被封禁用户立即被踢下线，不能靠 TTL 自然过期。
 - 所有管理写操作**必须在同一事务中写入 operation_logs**，确保「操作成功 = 日志写入」，不留审计盲区。
-- 配额调整不是直接改余额，而是调用 `[05]计费与支付模块` 的内部接口（如 `GrantCredits`），让计费模块自己管理余额一致性。
+- 配额调整不是直接改余额，而是调用 `[05]计费与支付模块` 的内部接口（如 `POST /api/v1/admin/credit-grant`），让计费模块自己管理余额一致性。
 - 添加管理员前必须校验目标用户 `pms_user.status = 'active'`，被封禁的用户不能被设为管理员。
 
 ---
@@ -511,14 +511,14 @@ flowchart TB
 
 ## 5. 依赖模块
 
-| 模块 | 依赖方式 | 依赖说明 |
-|------|----------|----------|
-| [00] 用户模块 | 读写 pms_user 表（通过内部接口） | 客户用户列表查询、封禁/解封、用户详情 |
-| [00] 用户模块 | Redis session:{token} | 封禁时删除用户 session 强制踢下线 |
-| [05] 计费与支付模块 | 内部接口（GrantCredits/DeductCredits） | 查看/调整用户配额余额 |
-| [06] AI网关模块 | 内部接口 | 渠道的增删改查、启用停用 |
-| [09] 插件与技能模块 | 内部接口 | 技能上下架、第三方插件注册 |
-| [08] API入口与中间件模块 | 中间件链 | AuthMiddleware → AdminMiddleware 两层鉴权 |
+| 模块 | 接口路径 | 用途 |
+|------|----------|------|
+| [00] 用户模块 | 直接读写 `pms_user` 表（同库） | 客户用户列表查询、封禁/解封、用户详情 |
+| [00] 用户模块 | Redis `DEL session:{token}` | 封禁时删除用户 session 强制踢下线 |
+| [05] 计费与支付模块 | `POST /api/v1/admin/credit-grant` + 直接读写 `pms_user_credit_account` 表 | 查看/调整用户配额余额 |
+| [06] AI网关模块 | 直接读写 `pms_ai_channel` 表（同库） | 渠道的增删改查、启用停用 |
+| [09] 插件与技能模块 | 直接读写 `pms_skill` / `pms_plugin` 表（同库） | 技能上下架、第三方插件注册 |
+| [08] API入口与中间件模块 | 中间件链：AuthMiddleware → AdminMiddleware | 两层鉴权 |
 | — | 数据库/Redis | 本模块自行管理 DB 连接池和 Redis 客户端 |
 
 ---
@@ -601,8 +601,8 @@ flowchart TB
 | 影响模块 | 影响说明 | 优先级 |
 |----------|----------|--------|
 | [08] API入口与中间件模块 | 需要新增 AdminMiddleware，挂在 AuthMiddleware 之后，仅对 `/api/v1/admin/*` 生效 | 高 |
-| [00] 用户模块 | 封禁用户时需要 [00] 暴露 `BanUser(userId)` 和 `GetUserSessions(userId)` 内部接口 | 高 |
-| [05] 计费与支付模块 | 配额调整需要 [05] 暴露 `GrantCredits` 和 `GetBalance` 内部接口 | 高 |
-| [06] AI网关模块 | 渠道管理需要 [06] 暴露渠道 CRUD 和 toggle 内部接口 | 中 |
+| [00] 用户模块 | 封禁用户时直接 `UPDATE pms_user SET status='banned'` + `DEL session:{token}` | 高 |
+| [05] 计费与支付模块 | 配额调整需要调 `POST /api/v1/admin/credit-grant` + 直接读 `pms_user_credit_account` 表查余额 | 高 |
+| [06] AI网关模块 | 渠道管理需要直接读写 `pms_ai_channel` 表（CRUD + toggle） | 中 |
 | [09] 插件与技能模块 | 技能/插件管理需要 [09] 暴露管理接口（创建/编辑/上下架） | 中 |
 | — | DB 建表脚本需包含 admins 和 operation_logs 建表 + 初始 super_admin 插入 | 中 |

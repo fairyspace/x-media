@@ -583,8 +583,8 @@ Accept: text/event-stream
 |------|----------|------|
 | Agent 策略模块 | 读 `pms_agent_spec` | 获取已渲染的 Pipeline |
 | AI 网关模块 | HTTP `POST /gateway/invoke` | 执行每个 Step 的模型调用 |
-| 素材模块 | HTTP `POST /assets/batch` | 生成结果回写为素材 |
-| 计费与支付模块 | HTTP `POST /quota/reserve` / `commit` / `release` | 预占/扣费/退款 |
+| 素材模块 | HTTP `POST /internal/assets/from-task` | 生成结果回写为素材 |
+| 计费与支付模块 | HTTP `Reserve` / `MarkRunning` / `Settle` / `Refund` | 预占/执行中/扣费/退款 |
 
 ### 7.2 调用 AI 网关的格式
 
@@ -625,7 +625,7 @@ POST /api/v1/gateway/invoke
 
 ```json
 // Worker 所有 Step 完成后调用素材模块
-POST /api/v1/assets/batch
+POST /internal/assets/from-task
 {
   "task_id": 42,
   "project_id": 10,

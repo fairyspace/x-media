@@ -723,12 +723,12 @@ create unique index idx_overage_unique on pms_overage_record (user_id, billing_m
 
 ### 3.3 任务内部调用（4个）
 
-| 方法 | 说明 | 调用方 |
-|------|------|--------|
-| `Reserve(taskID, userID, spec)` | 预占积分，创建 BillingOrder | 任务模块 |
-| `MarkRunning(orderID)` | 开始执行 | Worker |
-| `Settle(orderID)` | 结算扣费 | 任务模块 |
-| `Refund(orderID, reason)` | 退款解冻 | 任务模块 |
+| 方法 | 路径 | 说明 | 调用方 |
+|------|------|------|--------|
+| POST | `/internal/v1/quota/reserve` | 预占积分，创建 BillingOrder | 任务模块 |
+| POST | `/internal/v1/quota/orders/{orderID}/mark-running` | 开始执行 | Worker |
+| POST | `/internal/v1/quota/orders/{orderID}/settle` | 结算扣费 | 任务模块 |
+| POST | `/internal/v1/quota/orders/{orderID}/refund` | 退款解冻 | 任务模块 |
 
 ### 3.4 管理端（12个）
 
@@ -822,7 +822,7 @@ Response 200:
 
 | 接口 | 方向 | 说明 |
 |------|------|------|
-| `Estimate(specType, slots)` | Agent → Billing | 校验通过后，生成 Pipeline 前调用 |
+| `POST /internal/v1/quota/estimate` | Agent → Billing | 校验通过后，生成 Pipeline 前调用 |
 | `pms_billing_order.spec_id` | 数据引用 | 账单关联到 Spec |
 | `pms_pricing_rule.strategy_id` | 数据引用 | 定价关联到策略 |
 
@@ -830,11 +830,11 @@ Response 200:
 
 | 接口 | 方向 | 说明 |
 |------|------|------|
-| `Reserve(taskID, userID, spec)` | Task → Billing | 创建任务时预占积分 |
-| `MarkRunning(orderID)` | Worker → Billing | 开始执行 |
-| `Settle(orderID)` | Task → Billing | 成功后结算 |
-| `Refund(orderID, reason)` | Task → Billing | 失败后退款 |
-| `MarkUncertain(orderID, error)` | Task → Billing | 异常挂起 |
+| `POST /internal/v1/quota/reserve` | Task → Billing | 创建任务时预占积分 |
+| `POST /internal/v1/quota/orders/{orderID}/mark-running` | Worker → Billing | 开始执行 |
+| `POST /internal/v1/quota/orders/{orderID}/settle` | Task → Billing | 成功后结算 |
+| `POST /internal/v1/quota/orders/{orderID}/refund` | Task → Billing | 失败后退款 |
+| `POST /internal/v1/quota/orders/{orderID}/mark-uncertain` | Task → Billing | 异常挂起 |
 | `pms_billing_order.task_id` | 数据引用 | `references pms_task (id)` |
 
 ### 4.3 与用户模块
@@ -844,9 +844,9 @@ Response 200:
 | `pms_user_credit_account.user_id` | 数据引用 | `references pms_user (id)` |
 | `pms_user_subscription.user_id` | 数据引用 | `references pms_user (id)` |
 | `pms_payment_order.user_id` | 数据引用 | `references pms_user (id)` |
-| `GetAccount(userID)` | User → Billing | 查询余额（前端实时展示） |
-| `GetSubscription(userID)` | User → Billing | 查询会员状态（控制功能权限） |
-| `CheckFeature(userID, feature)` | User → Billing | 检查用户是否可用某功能（如 4K） |
+| `GET /internal/v1/quota/accounts/{userID}` | User → Billing | 查询余额（前端实时展示） |
+| `GET /internal/v1/quota/subscriptions/{userID}` | User → Billing | 查询会员状态（控制功能权限） |
+| `POST /internal/v1/quota/check-feature` | User → Billing | 检查用户是否可用某功能（如 4K） |
 
 ### 4.4 与外部支付网关
 
@@ -1028,11 +1028,11 @@ cost = (BaseCredits + CreditsPerUnit × quantity) × ResolutionMultiplier
 | 模块 | 依赖说明 | 接口 |
 |------|---------|------|
 | 用户模块 | 积分账户/订阅/支付归属 | 外键引用 `pms_user.id` |
-| 用户模块 | 注册时自动创建免费订阅 | `OnUserCreated(userID)` 回调 |
+| 用户模块 | 注册时自动创建免费订阅 | `POST /internal/v1/quota/on-user-created` 回调 |
 | Agent 策略模块 | 定价规则按策略配置 | `pms_pricing_rule.strategy_id` → `pms_agent_strategy.id` |
 | Agent 策略模块 | Spec 关联账单 | `pms_billing_order.spec_id` → `pms_agent_spec.id` |
 | 任务调度模块 | 任务生命周期驱动计费 | `pms_billing_order.task_id` → `pms_task.id` |
-| 任务调度模块 | 创建任务前检查余额 | `CheckBalance(userID, amount)` → bool |
+| 任务调度模块 | 创建任务前检查余额 | `POST /internal/v1/quota/check-balance` → bool |
 | 外部 | 微信支付 SDK | 统一下单 + 回调验签 |
 | 外部 | 支付宝 SDK | 预下单 + 回调验签 |
 

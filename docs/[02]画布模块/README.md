@@ -505,7 +505,7 @@ sequenceDiagram
     DB -->> CanvasAPI: snapshot_id
     CanvasAPI -->> Frontend: {snapshot_id, spec_json（预览用）}
     Note over User, DB: === 步骤2：Agent 校验 ===
-    CanvasAPI ->> AgentModule: POST /api/v1/agent/validate<br/>spec_json（快照中的参数）
+    CanvasAPI ->> AgentModule: POST /api/v1/agent/spec/{id}/validate<br/>spec_json（快照中的参数）
 
     alt 槽位不完整
         AgentModule -->> CanvasAPI: {valid: false, missing: ["角色性别", "场景时间"]}
@@ -745,7 +745,7 @@ MVP 阶段 **不处理多用户并发编辑**（项目同一时间只能由一�
 |---------------------|----------------------------|-------------------------------|
 | `[00]用户模块`      | 项目归属、认证中间件       | `GET /api/v1/users/me`        |
 | `[01]素材模块`      | 节点 data 中引用 asset_id  | `GET /api/v1/assets/{id}`     |
-| `[03]Agent策略模块` | Spec 校验与槽位补全        | `POST /api/v1/agent/validate` |
+| `[03]Agent策略模块` | Spec 校验与槽位补全        | `POST /api/v1/agent/spec/{id}/validate` |
 | `[04]任务调度模块`  | 提交生成任务、接收结果回写 | `POST /api/v1/tasks`          |
 
 ---

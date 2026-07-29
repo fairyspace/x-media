@@ -188,7 +188,7 @@ create table pms_ai_channel_model
 create index idx_ai_channel_model_lookup on pms_ai_channel_model (capability, model_key, enabled) where enabled = true;
 ```
 
-> **路由流程**：`Invoke(model="gpt-4o", capability="text")` →
+> **路由流程**：`POST /api/v1/gateway/invoke {model="gpt-4o", capability="text"}` →
 > `SELECT cm.*, ch.* FROM pms_ai_channel_model cm JOIN pms_ai_channel ch ON cm.channel_id=ch.id
 >  WHERE cm.model_key='gpt-4o' AND cm.enabled AND ch.status='enabled' AND ch.health_status != 'unhealthy'
 >  ORDER BY cm.priority DESC, ch.priority DESC LIMIT 1`

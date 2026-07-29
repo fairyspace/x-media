@@ -677,7 +677,7 @@ internal/asset/
 | 模块 | 依赖说明 | 接口要求 |
 |------|----------|----------|
 | `[00]用户模块` | 素材归属 user_id、AuthMiddleware 认证 | `GET /api/v1/users/me` |
-| `[07]存储模块` | OSS 上传签名、文件物理删除 | `POST /api/v1/storage/upload-sign` |
+| `[07]存储模块` | OSS 上传签名、文件物理删除 | `POST /api/v1/storage/upload-url` |
 | `[04]任务调度模块` | 提交缩略图生成任务、接收 AI 生成结果回写 | 内部接口 |
 | `[02]画布模块` | 画布通过 asset_id 引用素材 | — |
 
@@ -733,7 +733,7 @@ internal/asset/
 ```
 素材模块 → 存储模块
 
-POST /api/v1/storage/upload-sign
+POST /api/v1/storage/upload-url
 {
   "oss_key": "assets/2026/07/29/abc123.mp4",
   "content_type": "video/mp4",
