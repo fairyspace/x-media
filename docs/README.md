@@ -126,6 +126,6 @@ A: 先看 `open-ai-canvas/canvas-agent`，再对照 `[03]Agent策略模块/READM
 ## 8. 下一步行动
 
 1. 通读 `module-map.md`
-2. 打开 `open-ai-canvas` 跑通基础闭环
+2. 跑动 `open-ai-canvas` 开源项目，理解生成流程，或者tapNow 官网尝试
 3. 选择 assigned 模块，对照 README 开始实现
 
