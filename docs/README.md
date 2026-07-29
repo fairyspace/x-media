@@ -1,4 +1,4 @@
-# x-media AI 画布视频产品 - 毕业生上手指引
+# x-media AI 画布视频产品 - 上手指引
 
 Created: 2026-07-29
 Status: Draft

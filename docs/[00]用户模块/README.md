@@ -28,7 +28,7 @@ Status: Draft
 -- 用户主表
 create table users
 (
-    id            bigint primary key generated always as identity,
+    id            bigint primary key generated always as identity comment '主键',
     email         varchar(255) unique not null comment '登录邮箱',
     phone         varchar(32) comment '手机号',
     password_hash varchar(255)        not null comment '密码哈希',
@@ -41,19 +41,6 @@ create table users
     updated_at    timestamptz default now()
 );
 
-comment on table users is '用户主表';
-comment on column users.id is '主键';
-comment on column users.email is '登录邮箱';
-comment on column users.phone is '手机号';
-comment on column users.password_hash is '密码哈希';
-comment on column users.nickname is '昵称';
-comment on column users.avatar_url is '头像地址';
-comment on column users.role is '角色：user/admin';
-comment on column users.status is '状态：active/banned';
-comment on column users.last_login_at is '最后登录时间';
-comment on column users.created_at is '创建时间';
-comment on column users.updated_at is '更新时间';
-
 -- 会话数据放在 Redis，不建表
 -- Redis Key: session:{token}
 -- Redis Value 字段：
@@ -65,37 +52,23 @@ comment on column users.updated_at is '更新时间';
 -- 组织表
 create table organizations
 (
-    id         bigint primary key generated always as identity,
+    id         bigint primary key generated always as identity comment '主键',
     name       varchar(255) not null comment '组织名称',
     owner_id   bigint       not null references users (id) comment '拥有者用户ID',
     plan_type  varchar(32) default 'free' comment '套餐类型',
     created_at timestamptz default now()
 );
 
-comment on table organizations is '组织表';
-comment on column organizations.id is '主键';
-comment on column organizations.name is '组织名称';
-comment on column organizations.owner_id is '拥有者用户ID';
-comment on column organizations.plan_type is '套餐类型';
-comment on column organizations.created_at is '创建时间';
-
 -- 组织成员
 create table organization_members
 (
-    id              bigint primary key generated always as identity,
+    id              bigint primary key generated always as identity comment '主键',
     organization_id bigint not null references organizations (id) comment '组织ID',
     user_id         bigint not null references users (id) comment '用户ID',
     role            varchar(32) default 'member' comment '组织内角色',
     joined_at       timestamptz default now() comment '加入时间',
     unique (organization_id, user_id)
 );
-
-comment on table organization_members is '组织成员表';
-comment on column organization_members.id is '主键';
-comment on column organization_members.organization_id is '组织ID';
-comment on column organization_members.user_id is '用户ID';
-comment on column organization_members.role is '组织内角色';
-comment on column organization_members.joined_at is '加入时间';
 
 create unique index uk_organization_members_org_user
     on organization_members (organization_id, user_id);
