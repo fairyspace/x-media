@@ -584,7 +584,7 @@ Accept: text/event-stream
 | Agent 策略模块 | 读 `pms_agent_spec` | 获取已渲染的 Pipeline |
 | AI 网关模块 | HTTP `POST /gateway/invoke` | 执行每个 Step 的模型调用 |
 | 素材模块 | HTTP `POST /assets/batch` | 生成结果回写为素材 |
-| 计费配额模块 | HTTP `POST /quota/reserve` / `commit` / `release` | 预占/扣费/退款 |
+| 计费与支付模块 | HTTP `POST /quota/reserve` / `commit` / `release` | 预占/扣费/退款 |
 
 ### 7.2 调用 AI 网关的格式
 
@@ -724,7 +724,7 @@ flowchart TD
 | 文档 | 需要改的地方 | 优先级 |
 |------|-------------|--------|
 | `[03]Agent策略模块` | 确认 Pipeline 输出格式与本模块输入格式一致 | P0 |
-| `[05]计费配额模块` | `references users (id)` / `references tasks (id)` → 正确表名 | P0 |
-| `[05]计费配额模块` | 预占与扣费的调用时机对齐（创建任务时预占，完成/失败时扣/退） | P0 |
+| `[05]计费与支付模块` | `references users (id)` / `references tasks (id)` → 正确表名 | P0 |
+| `[05]计费与支付模块` | 预占与扣费的调用时机对齐（创建任务时预占，完成/失败时扣/退） | P0 |
 | `[06]AI网关模块` | `model_calls` 的 `channel_id` 需要关联到 task/step | P1 |
 | `[01]素材模块` | 确认批量创建素材接口 `POST /assets/batch` | P1 |

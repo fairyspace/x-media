@@ -37,10 +37,10 @@ x-media 是一个面向影视/短剧/广告场景的 AI 视频工作台。用户
 5. `[02]画布模块/README.md`
 6. `[03]Agent策略模块/README.md`
 7. `[04]任务调度模块/README.md`
-8. `[05]计费配额模块/README.md`
+8. `[05]计费与支付模块/README.md`
 9. `[06]AI网关模块/README.md`
 10. `[07]存储模块/README.md`
-11. `[08]后端服务模块/README.md`
+11. `[08]API入口与中间件模块/README.md`
 12. `[09]插件与技能模块/README.md`
 13. `[10]管理后台模块/README.md`
 14. `[11]基础设施模块/README.md`
@@ -90,10 +90,10 @@ bun run dev
 | 画布模块 | `web/src/modules/canvas` | `open-ai-canvas/web/src` |
 | Agent策略模块 | `internal/agent` | `open-ai-canvas/canvas-agent` |
 | 任务调度模块 | `internal/task` | `open-ai-canvas/backend/internal` |
-| 计费配额模块 | `internal/quota` | 参考策略配置 |
+| 计费与支付模块 | `internal/quota` | 参考策略配置 |
 | AI网关模块 | `internal/gateway` | `open-ai-canvas/README.md` |
 | 存储模块 | `internal/storage` | OSS 直传逻辑 |
-| 后端服务模块 | `cmd/server` | `open-ai-canvas/backend/cmd` |
+| API入口与中间件模块 | `cmd/server` | `open-ai-canvas/backend/cmd` |
 
 ---
 

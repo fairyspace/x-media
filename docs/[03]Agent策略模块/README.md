@@ -680,8 +680,8 @@ Agent 输出的 Pipeline 格式：
 | `[04]任务调度模块` | `references projects (id)` → `references pms_canvas_project (id)` | P0 |
 | `[04]任务调度模块` | `references users (id)` → `references pms_user (id)` | P0 |
 | `[04]任务调度模块` | `spec_id` 关联 → `references pms_agent_spec (id)` | P0 |
-| `[05]计费配额模块` | `references users (id)` / `references tasks (id)` → 正确表名 | P0 |
-| `[05]计费配额模块` | 成本预估需要 `spec_type` + `strategy_id` 入参 | P1 |
+| `[05]计费与支付模块` | `references users (id)` / `references tasks (id)` → 正确表名 | P0 |
+| `[05]计费与支付模块` | 成本预估需要 `spec_type` + `strategy_id` 入参 | P1 |
 | `[06]AI网关模块` | 补充视觉模型调用接口（Agent 需要调用 GPT-4V/Qwen-VL） | P1 |
 
 

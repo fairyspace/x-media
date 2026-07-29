@@ -803,7 +803,7 @@ SSE 事件格式（透传）：
 | Agent 策略模块 | HTTP → Gateway | SpecExtractor / Validator / VisionParser 调用 LLM |
 | 存储模块       | HTTP → Storage | AI 生成结果上传到 OSS                             |
 | 用户模块       | 外键引用       | `pms_ai_call_log.user_id` 归属                    |
-| 计费配额模块   | 外键引用       | `pms_ai_call_log.billing_order_id` 关联账单       |
+| 计费与支付模块   | 外键引用       | `pms_ai_call_log.billing_order_id` 关联账单       |
 | 外部           | HTTPS          | 各 AI 供应商 API                                  |
 
 ### 5.2 给任务调度模块的约定
@@ -1172,7 +1172,7 @@ flowchart LR
 | `[03]Agent策略模块` | Agent 调用 LLM 的格式要遵循 Gateway 统一协议               | P1     |
 | `[04]任务调度模块`  | Worker 调用 Gateway 时需传 `task_id` + `task_step_id`      | P0     |
 | `[04]任务调度模块`  | `model_calls` 的 `channel_id` 需关联到 task/step（已修正） | P0     |
-| `[05]计费配额模块`  | `pms_billing_order` 需关联 `pms_ai_call_log` 的 id         | P1     |
-| `[05]计费配额模块`  | 计费结算可基于 `pms_ai_call_log` 的实际用量                | P1     |
+| `[05]计费与支付模块`  | `pms_billing_order` 需关联 `pms_ai_call_log` 的 id         | P1     |
+| `[05]计费与支付模块`  | 计费结算可基于 `pms_ai_call_log` 的实际用量                | P1     |
 | `[07]存储模块`      | Gateway 需要调用存储模块上传 AI 生成的文件到 OSS           | P0     |
 | `[07]存储模块`      | 外键 `references users (id)` → `references pms_user (id)`  | P0     |
