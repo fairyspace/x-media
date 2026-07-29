@@ -1,7 +1,6 @@
 # [00] 用户模块设计稿
 
-Created: 2026-07-29
-Status: Draft
+Created: 2026-07-29 Status: Draft
 
 ---
 
@@ -26,12 +25,12 @@ Status: Draft
 
 ```sql
 -- 用户主表
-create table users
+CREATE TABLE pms_user
 (
-    id            bigint primary key generated always as identity comment '主键',
-    email         varchar(255) unique not null comment '登录邮箱',
+    id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT comment '主键',
+    email         varchar(255) UNIQUE NOT NULL comment '登录邮箱',
     phone         varchar(32) comment '手机号',
-    password_hash varchar(255)        not null comment '密码哈希',
+    password_hash varchar(255)        NOT NULL COMMENT '密码哈希',
     nickname      varchar(100) comment '昵称',
     avatar_url    text comment '头像地址',
     role          varchar(32) default 'user' comment '角色：user/admin',
@@ -50,19 +49,19 @@ create table users
 --   created_at
 
 -- 组织表
-create table organizations
+CREATE TABLE pms_organization
 (
-    id         bigint primary key generated always as identity comment '主键',
-    name       varchar(255) not null comment '组织名称',
+    id         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT comment '主键',
+    name       varchar(255) NOT NULL COMMENT '组织名称',
     owner_id   bigint       not null references users (id) comment '拥有者用户ID',
     plan_type  varchar(32) default 'free' comment '套餐类型',
     created_at timestamptz default now()
 );
 
 -- 组织成员
-create table organization_members
+CREATE TABLE pms_organization_member
 (
-    id              bigint primary key generated always as identity comment '主键',
+    id              BIGINT UNSIGNED NOT NULL AUTO_INCREMENT comment '主键',
     organization_id bigint not null references organizations (id) comment '组织ID',
     user_id         bigint not null references users (id) comment '用户ID',
     role            varchar(32) default 'member' comment '组织内角色',
@@ -89,22 +88,20 @@ sequenceDiagram
     participant UserService
     participant Redis
     participant Database
-
-    Frontend->>API: 注册/登录
-    API->>UserService: 校验参数
-    UserService->>Database: 写入用户
-    Database-->>UserService: 返回记录
-    UserService->>Redis: 写入 session:{token}
-    UserService-->>API: 返回 Token
-    API-->>Frontend: 登录成功
-
-    Frontend->>API: 携带 Token 请求资源
-    API->>UserService: 解析 Token
-    UserService->>Redis: 查询 session:{token}
-    Redis-->>UserService: 返回会话与 user_id
-    UserService-->>API: 绑定 user_id
-    API->>API: 权限校验
-    API-->>Frontend: 返回业务数据
+    Frontend ->> API: 注册/登录
+    API ->> UserService: 校验参数
+    UserService ->> Database: 写入用户
+    Database -->> UserService: 返回记录
+    UserService ->> Redis: 写入 session:{token}
+    UserService -->> API: 返回 Token
+    API -->> Frontend: 登录成功
+    Frontend ->> API: 携带 Token 请求资源
+    API ->> UserService: 解析 Token
+    UserService ->> Redis: 查询 session:{token}
+    Redis -->> UserService: 返回会话与 user_id
+    UserService -->> API: 绑定 user_id
+    API ->> API: 权限校验
+    API -->> Frontend: 返回业务数据
 ```
 
 关键流转：
@@ -140,30 +137,21 @@ flowchart LR
 
 ## 3. 接口清单（MVP）
 
-| 方法 | 路径 | 说明 |
-| -- | -- | -- |
-| POST | /api/v1/auth/register | 注册 |
-| POST | /api/v1/auth/login | 登录 |
-| POST | /api/v1/auth/logout | 登出 |
-| GET | /api/v1/users/me | 当前用户信息 |
-| PUT | /api/v1/users/me | 更新当前用户 |
+| 方法 | 路径                  | 说明         |
+|------|-----------------------|--------------|
+| POST | /api/v1/auth/register | 注册         |
+| POST | /api/v1/auth/login    | 登录         |
+| POST | /api/v1/auth/logout   | 登出         |
+| GET  | /api/v1/users/me      | 当前用户信息 |
+| PUT  | /api/v1/users/me      | 更新当前用户 |
 
 ---
 
 ## 4. 依赖模块
 
-| 模块 | 依赖说明 |
-| -- | -- |
-| 素材模块 | 素材归属用户 |
-| 画布模块 | 画布归属用户 |
+| 模块         | 依赖说明     |
+|--------------|--------------|
+| 素材模块     | 素材归属用户 |
+| 画布模块     | 画布归属用户 |
 | 任务调度模块 | 任务归属用户 |
 | 计费配额模块 | 额度归属用户 |
-
----
-
-## 5. 与 open-ai-canvas 的映射
-
-| 我们的模块 | open-ai-canvas 对应 |
-| -- | -- |
-| 用户模块 | backend 的用户/注册/登录体系 |
-| 会话管理 | 后端登录态与会话控制 |
