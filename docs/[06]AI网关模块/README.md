@@ -573,50 +573,29 @@ sequenceDiagram
 
 **实现伪码**：
 
-```go
-func (s *GatewayService) Route(model string, capability string) (*Channel, error) {
-channels := s.repo.FindChannelsByModel(model, capability) // 按优先级排序
-
-for _, ch := range channels {
-switch ch.HealthStatus {
-case "healthy", "unknown":
-// 可以尝试
-case "unhealthy":
-if time.Since(*ch.LastHealthCheckAt) > time.Duration(ch.CircuitBreakerRecoverMs)*time.Millisecond {
-// 进入半开探测——允许 1 个请求通过
-ch.HealthStatus = "degraded"
-} else {
-continue // 还在熔断窗口内，跳过
-}
-case "degraded":
-// 半开状态——允许通过，但只此一次
-}
-
-// 尝试获取并发槽位
-acquired := s.semaphore.TryAcquire(ch.ID, ch.ConcurrencyLimit)
-if !acquired {
-continue // 槽位满，尝试下一个渠道
-}
-
-return ch, nil
-}
-return nil, ErrAllChannelsExhausted
-}
-
-func (s *GatewayService) MarkSuccess(channelID int64) {
-s.repo.UpdateChannelHealth(channelID, "healthy", 0, time.Now())
-}
-
-func (s *GatewayService) MarkFailure(channelID int64) {
-ch, _ := s.repo.GetChannel(channelID)
-fails := ch.ConsecutiveFailures + 1
-health := "healthy"
-if fails >= ch.CircuitBreakerThreshold {
-health = "unhealthy"
-}
-s.repo.UpdateChannelHealth(channelID, health, fails, time.Now())
-}
+```mermaid
+flowchart TD
+    A[Route: 收到调用请求<br/>model + capability] --> B[从 DB 查询匹配渠道<br/>按 priority 排序]
+    B --> C[遍历渠道列表]
+    C --> D{渠道健康状态?}
+    D -->|healthy / unknown| G[尝试获取]
+    D -->|unhealthy| E{超过恢复窗口?}
+    E -->|否| F[跳过, 试下一个]
+    E -->|是| G[进入半开探测]
+    D -->|degraded| G[半开, 允许通过一次]
+    G --> H{获取并发槽位成功?}
+    H -->|是| I[返回该渠道 → 调用]
+    H -->|否| F
+    F --> C
+    C -->|遍历完无可用| J[返回 ErrAllChannelsExhausted]
 ```
+
+**状态变更**：
+
+| 事件 | 动作 |
+|------|------|
+| 调用成功 | `MarkSuccess`: 状态→healthy, 连续失败归零 |
+| 调用失败 | `MarkFailure`: 连续失败+1，达到阈值→unhealthy |
 
 ### 3.4 ComfyUI 工作流执行
 
@@ -952,301 +931,201 @@ POST /api/v1/storage/upload
 
 ### 6.1 并发槽位管理
 
-```go
-// SemaphorePool 管理所有渠道的信号量
-type SemaphorePool struct {
-mu       sync.RWMutex
-channels map[int64]*ChannelSemaphore
-}
+每个渠道都有并发上限，Router 选渠道前先尝试获取槽位，获取不到则降级到下一渠道。
 
-type ChannelSemaphore struct {
-ch       chan struct{} // 缓冲 channel 实现信号量
-limit    int
-acquired int32 // 原子操作，快速检查（无需加锁）
-}
+**数据结构**：
 
-func (p *SemaphorePool) TryAcquire(channelID int64, timeout time.Duration) (bool, func ()) {
-cs := p.getOrCreate(channelID)
+| 结构 | 字段 | 说明 |
+|------|------|------|
+| SemaphorePool | `channels map[channelID] → ChannelSemaphore` | 全局信号量池，按渠道隔离 |
+| ChannelSemaphore | `ch chan`（缓冲 channel） | 用有缓冲 channel 实现信号量，容量=并发上限 |
+|  | `acquired int32`（原子计数） | 当前已获取槽位数，原子操作无锁读取 |
+| pms_ai_concurrency_slot | DB 记录 | 持久化槽位，含 `expires_at` 防泄漏 |
 
-select {
-case cs.ch <- struct{}{}:
-atomic.AddInt32(&cs.acquired, 1)
+**获取流程**：
 
-// 持久化到数据库
-db.Create(&pms_ai_concurrency_slot{
-ChannelID: channelID,
-Status: "acquired",
-ExpiresAt: time.Now().Add(timeout + 60*time.Second), // API超时 + 60s缓冲
-})
+```mermaid
+sequenceDiagram
+    participant R as Router
+    participant P as SemaphorePool
+    participant DB as 数据库
 
-release := func () {
-<-cs.ch
-atomic.AddInt32(&cs.acquired, -1)
-db.Model(&slot).Updates(map[string]interface{}{
-"status": "released", "released_at": time.Now(),
-})
-}
-return true, release
+    R->>P: TryAcquire(channelID, timeout)
+    P->>P: 向 channel 发送空结构体（占位）
+    alt 获取成功
+        P->>DB: INSERT slot(status=acquired)
+        P-->>R: 返回槽位 + release 函数
+    else 超时（槽位全满）
+        P-->>R: 返回否 → Router 降级到下一渠道
+    end
 
-case <-time.After(timeout):
-return false, nil // 超时——上层 Router 降级到下一个渠道
-}
-}
+    Note over R: 调用完成后……
+    R->>P: 调用 release()
+    P->>P: 从 channel 取回空结构体（释放）
+    P->>DB: UPDATE slot(status=released)
 ```
 
 ### 6.2 适配器抽象
 
-```go
-// ProviderAdapter 是所有供应商适配器的接口
-type ProviderAdapter interface {
-// BuildRequest 将统一格式转为供应商原生格式
-BuildRequest(input *GatewayRequest) (*http.Request, error)
-// ParseResponse 将供应商原生响应转为统一格式
-ParseResponse(resp *http.Response) (*GatewayResponse, error)
-// ParseStreamResponse 解析流式响应的一个 chunk
-ParseStreamChunk(data []byte) (*StreamChunk, error)
-}
+每个 AI 供应商有自己的 API 格式，适配器负责**统一格式 ↔ 供应商原生格式**的双向转换。
 
-// AdapterRegistry 按 api_format 注册适配器
-var AdapterRegistry = map[string]ProviderAdapter{
-"openai":    &OpenAIAdapter{}, // 标准 OpenAI 格式
-"gemini":    &GeminiAdapter{}, // Google Gemini 格式
-"newapi":    &NewAPIAdapter{}, // 国产 NewAPI 格式（Kling/可图等）
-"stability": &StabilityAdapter{}, // Stability AI 格式
-"comfyui":   &ComfyUIAdapter{}, // ComfyUI API
-}
+**适配器接口**：
+
+| 方法 | 职责 |
+|------|------|
+| `BuildRequest` | 将统一 GatewayRequest → 供应商原生 HTTP Request |
+| `ParseResponse` | 将供应商原生响应 → 统一 GatewayResponse |
+| `ParseStreamChunk` | 将流式响应的单个 chunk → 统一 StreamChunk |
+
+**适配器注册表**（按 `api_format` 路由）：
+
+| api_format | 适配器 | 典型供应商 |
+|------------|--------|-----------|
+| `openai` | OpenAIAdapter | GPT-4o, DALL-E, Sora |
+| `gemini` | GeminiAdapter | Gemini 2.0, Imagen |
+| `newapi` | NewAPIAdapter | Kling, 可图, 即梦 等国产 |
+| `stability` | StabilityAdapter | Stable Diffusion, SD3 |
+| `comfyui` | ComfyUIAdapter | 自建 ComfyUI 工作流 |
+
+**NewAPI 适配器——视频异步请求/响应示例**：
+
+```mermaid
+sequenceDiagram
+    participant W as 调用方
+    participant A as NewAPIAdapter
+    participant S as NewAPI 供应商
+
+    W->>A: BuildRequest(capability=video)
+    A->>A: 路由到 POST /v1/video/submit
+    A->>S: POST {model, prompt, duration}
+    S-->>A: {code:0, data:{task_id:"abc"}}
+
+    A->>A: ParseResponse()
+    alt code == 0
+        A-->>W: {status:"processing", providerTaskID:"abc"}
+    else code != 0
+        A-->>W: error
+    end
 ```
 
-**NewAPI 适配器——视频异步示例**：
-
-```go
-type NewAPIAdapter struct {
-BaseURL string
-APIKey  string
-}
-
-func (a *NewAPIAdapter) BuildRequest(input *GatewayRequest) (*http.Request, error) {
-switch input.Capability {
-case "video":
-// NewAPI 视频：POST /v1/video/submit
-body := map[string]interface{}{
-"model":  input.Model,
-"prompt": input.Input["prompt"],
-"duration": input.Input["duration_seconds"],
-}
-return http.NewRequest("POST", a.BaseURL+"/v1/video/submit", toJSON(body))
-// ...
-}
-}
-
-func (a *NewAPIAdapter) ParseResponse(resp *http.Response) (*GatewayResponse, error) {
-var raw struct {
-Code int    `json:"code"`
-Data struct {
-TaskID string `json:"task_id"`
-} `json:"data"`
-}
-json.NewDecoder(resp.Body).Decode(&raw)
-
-if raw.Code != 0 {
-return nil, fmt.Errorf("newapi error: code=%d", raw.Code)
-}
-
-// 返回中间状态——调用方需要轮询
-return &GatewayResponse{
-Status:         "processing",
-ProviderTaskID: raw.Data.TaskID,
-}, nil
-}
-```
+> 视频生成是异步的——API 返回 processing 状态后，调用方通过 `providerTaskID` 轮询结果。
 
 ### 6.3 重试与退避
 
-```go
-func (s *GatewayService) InvokeWithRetry(ctx context.Context, req *GatewayRequest) (*GatewayResponse, error) {
-const maxRetries = 2
-baseDelay := 1 * time.Second
+调用失败时自动切换到备用渠道重试，使用**指数退避**避免雪崩。
 
-var lastErr error
-triedChannels := make(map[int64]bool)
+```mermaid
+flowchart TD
+    A[开始调用, attempt=0<br/>已尝试渠道=空] --> B[Route 选渠道<br/>排除已失败的渠道]
+    B -->|无可用渠道| F[返回错误]
+    B -->|有渠道| C[执行实际调用]
 
-for attempt := 0; attempt <= maxRetries; attempt++ {
-// 路由——排除已尝试失败的渠道
-ch, err := s.router.Route(req.Model, req.Capability, triedChannels)
-if err != nil {
-return nil, fmt.Errorf("no available channel: %w", err)
-}
-
-resp, err := s.invokeChannel(ctx, ch, req)
-
-if err == nil && resp.Status == "success" {
-return resp, nil
-}
-
-// 记录失败渠道
-triedChannels[ch.ID] = true
-
-// 判断是否可重试
-if !isRetryable(err, resp) {
-return resp, err // 4xx 客户端错误不重试
-}
-
-// 指数退避
-if attempt < maxRetries {
-delay := baseDelay * time.Duration(1<<attempt) // 1s, 2s
-select {
-case <-time.After(delay):
-case <-ctx.Done():
-return nil, ctx.Err()
-}
-}
-
-lastErr = err
-}
-
-return nil, fmt.Errorf("all retries exhausted: %w", lastErr)
-}
-
-func isRetryable(err error, resp *GatewayResponse) bool {
-if errors.Is(err, context.DeadlineExceeded) { return true }
-if resp == nil { return true }
-// 5xx / 429 可重试，4xx 不重试
-if resp.HTTPStatusCode >= 500 || resp.HTTPStatusCode == 429 { return true }
-return false
-}
+    C -->|成功| D[返回结果]
+    C -->|失败| E{可重试?}
+    E -->|否: 4xx 客户端错误| F
+    E -->|是: 超时/5xx/429| G{attempt &lt; 2?}
+    G -->|否| F
+    G -->|是| H[记录失败渠道]
+    H --> I[指数退避等待<br/>1s → 2s]
+    I --> J[attempt++]
+    J --> B
 ```
+
+**重试判断规则**：
+
+| 错误类型 | 是否重试 | 原因 |
+|----------|----------|------|
+| 上下文超时 `DeadlineExceeded` | 是 | 可能是网络波动 |
+| HTTP 5xx | 是 | 服务端临时故障 |
+| HTTP 429 | 是 | 限流，降级到其他渠道 |
+| HTTP 4xx | 否 | 客户端错误，重试无意义 |
+| 连接错误（resp 为 nil） | 是 | 重试下一个渠道 |
+
+**退避策略**：基础延迟 1s，每次重试延迟 ×2（1s → 2s），最多重试 2 次。
 
 ### 6.4 健康检查定时任务
 
-```go
-// 每 30 秒对所有 enabled 渠道做健康探测
-func (s *GatewayService) HealthCheckLoop(ctx context.Context) {
-ticker := time.NewTicker(30 * time.Second)
-defer ticker.Stop()
+每 30 秒对所有 enabled 渠道做一次轻量健康探测，用于驱动熔断恢复和渠道下架。
 
-for {
-select {
-case <-ticker.C:
-channels := s.repo.FindAllEnabledChannels()
-for _, ch := range channels {
-go s.healthCheck(ctx, ch)
-}
-case <-ctx.Done():
-return
-}
-}
-}
+```mermaid
+flowchart TD
+    A[每30s触发] --> B[取所有 enabled 渠道]
+    B --> C[并发探测每个渠道]
+    C --> D{探测结果?}
 
-func (s *GatewayService) healthCheck(ctx context.Context, ch *Channel) {
-// 简单探测——发送一个轻量请求
-start := time.Now()
-err := s.probeChannel(ctx, ch)
-duration := time.Since(start)
+    D -->|成功 或 耗时&lt;5s| E[状态→healthy<br/>连续失败归零]
+    D -->|失败| F[连续失败 +1]
+    F --> G{达到熔断阈值?}
+    G -->|否| H[保持 healthy]
+    G -->|是| I[状态→unhealthy]
 
-if err == nil || duration < 5*time.Second {
-// 探测成功——恢复健康
-s.repo.UpdateChannelHealth(ch.ID, "healthy", 0, time.Now())
-} else {
-// 探测失败
-newFails := ch.ConsecutiveFailures + 1
-status := "healthy"
-if newFails >= ch.CircuitBreakerThreshold {
-status = "unhealthy"
-}
-s.repo.UpdateChannelHealth(ch.ID, status, newFails, time.Now())
-}
-}
-
-// 探测方式因渠道类型而异：
-// - OpenAI: GET /v1/models（轻量）
-// - NewAPI: POST /v1/models/list
-// - ComfyUI: GET /system_stats
+    E --> J[更新 DB]
+    H --> J
+    I --> J
 ```
 
-### 6.5 调用日志写入——MiddleWare 模式
+**探测方式（按渠道类型）**：
 
-```go
-func (s *GatewayService) Invoke(ctx context.Context, req *GatewayRequest) (*GatewayResponse, error) {
-startedAt := time.Now()
+| 渠道类型 | 探测端点 | 说明 |
+|----------|----------|------|
+| OpenAI | `GET /v1/models` | 轻量，无副作用 |
+| NewAPI | `POST /v1/models/list` | 国产 API 通用探测 |
+| ComfyUI | `GET /system_stats` | 自建服务状态 |
 
-// 创建日志记录
-log := &AICallLog{
-UserID:      req.UserID,
-TaskID:      req.TaskID,
-TaskStepID:  req.TaskStepID,
-ChannelID:   req.SelectedChannelID,
-Model:       req.Model,
-Capability:  req.Capability,
-RequestJSON: toJSONB(req.Input),
-Status:      "pending",
-Attempt:     req.Attempt,
-StartedAt:   startedAt,
-}
-s.repo.CreateCallLog(log)
+### 6.5 调用日志写入
 
-// 执行实际调用
-resp, err := s.doInvoke(ctx, req)
+每次 AI 调用都需要完整记录请求/响应、耗时、token 消耗，用于计费结算和问题排查。
 
-// 更新日志
-now := time.Now()
-log.Status = "success"
-log.DurationMs = now.Sub(startedAt).Milliseconds()
-log.FinishedAt = now
+```mermaid
+sequenceDiagram
+    participant S as GatewayService
+    participant DB as 数据库
 
-if err != nil {
-log.Status = "failed"
-log.ErrorMessage = err.Error()
-}
-if resp != nil {
-log.HTTPStatusCode = resp.HTTPStatusCode
-log.ProviderStatus = resp.ProviderStatus
-log.InputTokens = resp.Usage.InputTokens
-log.OutputTokens = resp.Usage.OutputTokens
-log.ResponseJSON = toJSONB(resp.Raw)
-log.MediaCount = resp.Usage.MediaCount
-}
-
-s.repo.UpdateCallLog(log)
-return resp, err
-}
+    S->>S: 记录 startedAt
+    S->>DB: 1. INSERT call_log (status=pending)<br/>写入 user_id, task_id, model, request_json…
+    S->>S: 2. 执行实际 AI 调用
+    alt 调用成功
+        S->>DB: 3. UPDATE call_log<br/>status=success, duration_ms<br/>input_tokens, output_tokens<br/>response_json（压缩或截断）
+    else 调用失败
+        S->>DB: 3. UPDATE call_log<br/>status=failed, error_message<br/>http_status_code
+    end
 ```
+
+**日志字段设计**：
+
+| 字段 | 说明 | 处理策略 |
+|------|------|----------|
+| request_json | 完整请求体 | 大文件（图片 base64）压缩存储或只保留前 4KB |
+| response_json | 完整响应体 | 同上 |
+| input_tokens / output_tokens | Token 消耗 | 用于计费结算 |
+| duration_ms | 耗时 | 性能分析 |
+| media_count | 生成媒体数量 | 图片/视频计数 |
 
 ### 6.6 输入/输出过滤中间件（预留）
 
-```go
-// 中间件链
-type Middleware func (next InvokeFunc) InvokeFunc
+中间件以**洋葱模型**嵌套，请求先经过最外层中间件，逐层向内；响应从最内层返回，逐层向外。
 
-func ContentSafetyMiddleware(next InvokeFunc) InvokeFunc {
-return func (ctx context.Context, req *GatewayRequest) (*GatewayResponse, error) {
-// 1. 输入消毒——过滤敏感词、注入检测
-if containsBlockedWords(req.Input) {
-return nil, ErrContentFiltered
-}
+**中间件链执行顺序**：
 
-resp, err := next(ctx, req)
-if err != nil {
-return nil, err
-}
-
-// 2. 输出审核——NSFW 检测
-if resp.Output != nil && isNSFW(resp.Output) {
-return nil, ErrOutputFiltered
-}
-
-return resp, nil
-}
-}
-
-// 中间件注册
-invoke := ContentSafetyMiddleware(
-CostSnapshotMiddleware( // 写入 estimated_cost_credits
-LogAuditMiddleware( // 写入 pms_ai_call_log
-s.doInvoke,
-),
-),
-)
+```mermaid
+flowchart LR
+    A[请求] --> B[ContentSafety<br/>输入敏感词过滤]
+    B --> C[CostSnapshot<br/>预估积分快照]
+    C --> D[LogAudit<br/>审计日志写入]
+    D --> E[实际 AI 调用]
+    E --> F[LogAudit<br/>记录响应]
+    F --> G[CostSnapshot<br/>记录实际消耗]
+    G --> H[ContentSafety<br/>输出 NSFW 检测]
+    H --> I[响应]
 ```
+
+**各中间件职责**：
+
+| 中间件 | 输入阶段 | 输出阶段 |
+|--------|----------|----------|
+| ContentSafety | 检测敏感词，命中则拒绝 | NSFW 检测，命中则拒绝 |
+| CostSnapshot | 写入预估积分 `estimated_cost_credits` | — |
+| LogAudit | 写入 `pms_ai_call_log`（status=pending） | 更新调用结果（success/failed） |
 
 ---
 

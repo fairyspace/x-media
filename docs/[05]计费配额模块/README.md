@@ -871,178 +871,155 @@ Response 200:
 
 ### 5.1 并发安全——乐观锁
 
-```go
-// Reserve 核心 SQL（单条原子操作）
-result := db.Exec(`
-    UPDATE pms_user_credit_account
-    SET available_credits = available_credits - ?,
-        reserved_credits  = reserved_credits + ?,
-        version = version + 1
-    WHERE user_id = ?
-      AND available_credits >= ?
-`, amount, amount, userID, amount)
+扣费操作使用数据库行级原子更新，在一条 SQL 中完成"扣减 + 校验"，避免并发超扣。
 
-if result.RowsAffected == 0 {
-    return ErrInsufficientCredits
-}
+**SQL 动作**：
+
+```sql
+UPDATE pms_user_credit_account
+SET available_credits = available_credits - {amount},
+    reserved_credits  = reserved_credits + {amount},
+    version = version + 1
+WHERE user_id = {userID}
+  AND available_credits >= {amount}   -- 天然防超扣
 ```
+
+**执行流程**：
+
+| 步骤 | 说明 |
+|------|------|
+| 1. 执行 UPDATE | 单条 SQL 原子操作，PostgreSQL 对该行加行锁 |
+| 2. 检查受影响行数 | `RowsAffected == 0` → 余额不足，返回 `ErrInsufficientCredits` |
+| 3. 成功 | 余额扣减、预占增加、版本号 +1（用于审计追踪） |
 
 > 关键：`WHERE available_credits >= ?` 利用 PostgreSQL 行锁保证不会超扣。`version` 递增用于追踪，不依赖它做冲突检测（比 CAS 更可靠）。
 
 ### 5.2 幂等性——防重复扣费与重复支付
 
-```go
-// 创建 BillingOrder 时
-idempotencyKey := fmt.Sprintf("task:%d", taskID)
-// 唯一索引：(user_id, idempotency_key)
+**幂等键设计**：
 
-// 创建 PaymentOrder 时
-idempotencyKey := fmt.Sprintf("pay:%s:%s:%d", orderType, planTier, time.Now().Unix()/60)
-// 同一用户每分钟内同类型订单只有一个
-// 唯一索引：(user_id, idempotency_key)
-
-// 支付回调幂等——已 paid 的订单不再重复履约
-if paymentOrder.Status == "paid" || paymentOrder.Status == "fulfilled" {
-    return respondSuccess() // 幂等：告诉支付网关已处理
-}
-```
+| 场景 | 幂等键格式 | 唯一索引 | 说明 |
+|------|-----------|----------|------|
+| 任务扣费 | `task:{taskID}` | `(user_id, idempotency_key)` | 同一个 task 不会重复扣两次 |
+| 支付订单 | `pay:{orderType}:{planTier}:{minute}` | `(user_id, idempotency_key)` | 同一用户每分钟内同类型订单只创建一次 |
+| 支付回调 | 检查 `status == 'paid'` | — | 已履约订单直接返回成功，不重复处理 |
 
 ### 5.3 支付回调安全
 
-```go
-func HandleWechatPayCallback(ctx context.Context, body []byte) error {
-    // 1. 验签——防止伪造回调
-    if !wechatPay.VerifySignature(ctx, body) {
-        return errors.New("invalid signature")
-    }
+```mermaid
+sequenceDiagram
+    participant WX as 微信支付平台
+    participant S as 计费模块
+    participant DB as 数据库
 
-    // 2. 解析回调数据
-    var notify WechatPayNotify
-    json.Unmarshal(body, &notify)
-
-    // 3. 幂等检查
-    order, err := repo.FindPaymentOrderByChannelNo(ctx, notify.TransactionID)
-    if err == nil && order.Status == "fulfilled" {
-        return respondSuccess() // 已处理
-    }
-
-    // 4. 事务内履约
-    return db.Transaction(func(tx *gorm.DB) error {
-        // 锁定订单行
-        tx.Where("order_no = ? AND status = 'pending'", notify.OutTradeNo).
-           First(&order)
-
-        // 金额核对——防止金额篡改
-        if order.AmountCents != notify.Amount.Total {
-            return ErrAmountMismatch
-        }
-
-        tx.Model(&order).Updates(map[string]interface{}{
-            "status": "paid", "channel_order_no": notify.TransactionID,
-            "channel_callback_raw": body, "paid_at": time.Now(),
-        })
-
-        // 履约
-        return fulfillOrder(tx, &order)
-    })
-}
+    WX->>S: POST /callback 支付通知
+    S->>S: ① 验签: 验证回调签名
+    alt 签名无效
+        S-->>WX: FAIL（拒绝）
+    end
+    S->>S: ② 解析 JSON 通知体
+    S->>DB: ③ 幂等检查: 按 transaction_id 查订单
+    alt 订单已履约
+        S-->>WX: SUCCESS（幂等）
+    end
+    S->>DB: BEGIN 事务
+    S->>DB: ④ 锁定订单行: SELECT FOR UPDATE<br/>WHERE order_no = ? AND status = 'pending'
+    S->>S: ⑤ 金额核对: 订单金额 vs 通知金额
+    alt 金额不匹配
+        S->>DB: ROLLBACK
+        S-->>WX: FAIL（金额异常）
+    end
+    S->>DB: ⑥ 更新订单: status = 'paid'<br/>写入流水号、原始回调、支付时间
+    S->>DB: ⑦ 履约: 发放积分/权益
+    S->>DB: COMMIT
+    S-->>WX: SUCCESS
 ```
 
 ### 5.4 日限额重置定时任务
 
-```go
-// 每天 UTC+8 00:00:00 执行
-func ResetDailyUsage(ctx context.Context) error {
-    result := db.Exec(`
-        UPDATE pms_user_credit_account
-        SET daily_used = 0, updated_at = now()
-        WHERE daily_used > 0
-    `)
-    return result.Error
-}
+每天 UTC+8 零点执行，将当天已用量归零：
+
 ```
+触发时间: 每天 00:00 (UTC+8)
+SQL: UPDATE pms_user_credit_account
+     SET daily_used = 0, updated_at = now()
+     WHERE daily_used > 0
+```
+
+> 只更新 `daily_used > 0` 的行，避免全表扫描。`updated_at` 更新用于审计。
 
 ### 5.5 月积分发放定时任务
 
-```go
-// 每月 1 号 UTC+8 00:00:00 执行
-func GrantMonthlyCredits(ctx context.Context) error {
-    currentMonth := time.Now().Format("2006-01")
+每月 1 号零点扫描所有活跃订阅用户，按套餐发放月积分。用游标分页处理海量用户。
 
-    // 游标分页处理大量用户
-    var lastID int64
-    for {
-        var subs []UserSubscription
-        db.Where("id > ? AND status = 'active' AND credits_granted_for != ?",
-            lastID, currentMonth).
-            Order("id").Limit(500).Find(&subs)
-
-        if len(subs) == 0 { break }
-
-        for _, sub := range subs {
-            plan := findPlan(sub.PlanID)
-            if plan.MonthlyCredits == 0 { continue }
-
-            db.Transaction(func(tx *gorm.DB) error {
-                // 发放积分
-                tx.Exec(`UPDATE pms_user_credit_account
-                    SET available_credits = available_credits + ?, version = version + 1
-                    WHERE user_id = ?`, plan.MonthlyCredits, sub.UserID)
-
-                // 记账
-                tx.Create(&CreditLedger{
-                    UserID: sub.UserID, LedgerType: "subscription_grant",
-                    Amount: plan.MonthlyCredits,
-                    ReferenceKey: fmt.Sprintf("sub:%d:%s", sub.ID, currentMonth),
-                })
-
-                // 标记已发放
-                tx.Model(&sub).Update("credits_granted_for", currentMonth)
-                return nil
-            })
-        }
-        lastID = subs[len(subs)-1].ID
-    }
-    return nil
-}
+```mermaid
+flowchart TD
+    A[每月1号 00:00 触发] --> B[游标 lastID=0<br/>本月标识 currentMonth]
+    B --> C[查下一批500个活跃订阅<br/>WHERE id &gt; lastID<br/>AND status='active'<br/>AND credits_granted_for != currentMonth]
+    C -->|空| D[任务结束]
+    C -->|有数据| E[遍历每个订阅]
+    E --> F{套餐月积分 &gt; 0?}
+    F -->|否| E
+    F -->|是| G[开事务]
+    G --> H[增加 available_credits]
+    G --> I[写入 credit_ledger 记账]
+    G --> J[标记 credits_granted_for = currentMonth]
+    G --> K[提交事务]
+    K --> E
+    E -->|本批处理完| L[更新游标 lastID = 本批最后ID]
+    L --> C
 ```
+
+**关键设计**：
+
+| 机制 | 说明 |
+|------|------|
+| 游标分页 | 每批 500 条，避免一次性加载全部用户撑爆内存 |
+| 防重复发放 | `credits_granted_for != currentMonth` 确保同月不重复发放 |
+| 事务内三合一 | 发放积分 + 记账 + 标记已发放在同一事务中，任一失败全部回滚 |
 
 ### 5.6 BillingOrder 状态机
 
-```go
-func (o *BillingOrder) TransitionTo(newStatus string) error {
-    allowed := map[string][]string{
-        "reserved":  {"running", "refunded"},          // 预占后可执行或取消
-        "running":   {"settled", "refunded", "uncertain"},
-        "uncertain": {"settled", "refunded"},           // 仅管理员可操作
-    }
-    for _, allowed := range allowed[o.Status] {
-        if allowed == newStatus {
-            return nil
-        }
-    }
-    return fmt.Errorf("illegal transition: %s → %s", o.Status, newStatus)
-}
+```mermaid
+stateDiagram-v2
+    [*] --> reserved: 预占积分
+    reserved --> running: 任务开始执行
+    reserved --> refunded: 用户取消任务
+    running --> settled: 任务完成, 结算
+    running --> refunded: 任务失败退款
+    running --> uncertain: 异常中断
+    uncertain --> settled: 管理员确认结算
+    uncertain --> refunded: 管理员确认退款
 ```
+
+**状态转换规则**：
+
+| 当前状态 | 可转换到 | 说明 |
+|----------|----------|------|
+| `reserved` | `running`, `refunded` | 预占后可执行或取消 |
+| `running` | `settled`, `refunded`, `uncertain` | 执行中可正常结算、退款，或标记异常 |
+| `uncertain` | `settled`, `refunded` | 仅管理员可操作的人工裁决状态 |
 
 ### 5.7 分辨率乘数计算
 
-```go
-// pms_pricing_rule.resolution_multiplier JSONB 示例
-// {"480p": 0.5, "720p": 1.0, "1080p": 2.0, "4k": 4.0}
+不同分辨率消耗不同积分，通过 `resolution_multiplier` 配置实现差异化定价。
 
-func calcCost(pricing *PricingRule, quantity int, resolution string) int {
-    baseCost := pricing.BaseCredits + pricing.CreditsPerUnit*quantity
+**定价公式**：
 
-    multiplier := 1.0
-    if pricing.ResolutionMultiplier != nil {
-        if m, ok := pricing.ResolutionMultiplier[resolution]; ok {
-            multiplier = m
-        }
-    }
-    return int(float64(baseCost) * multiplier)
-}
 ```
+cost = (BaseCredits + CreditsPerUnit × quantity) × ResolutionMultiplier
+```
+
+**乘数配置示例**（`pms_pricing_rule.resolution_multiplier` JSONB 字段）：
+
+| 分辨率 | 乘数 | 说明 |
+|--------|------|------|
+| 480p | 0.5 | 低清，半价 |
+| 720p | 1.0 | 基准分辨率 |
+| 1080p | 2.0 | 高清，2 倍 |
+| 4k | 4.0 | 超高清，4 倍 |
+
+> 分辨率未配置时默认乘数为 1.0。
 
 ---
 

@@ -435,30 +435,31 @@ TaskService:
 
 ### 4.1 Worker 启动伪码
 
-```go
-func (s *TaskService) StartWorkerPool(n int) {
-    for i := 0; i < n; i++ {
-        go s.runWorker(fmt.Sprintf("worker-%d", i))
-    }
-}
+Worker 从任务表中争抢任务、持有租约、心跳续期、处理完成后释放——整体是一个**竞争-获取-续期-释放**循环。
 
-func (s *TaskService) runWorker(id string) {
-    for {
-        task, err := s.repo.ClaimNextTask(ctx, id, 45*time.Second)
-        if err != nil || task == nil {
-            time.Sleep(2 * time.Second)
-            continue
-        }
-
-        // 带租约续期的 context
-        ctx, cancel := context.WithCancel(context.Background())
-        go s.renewLeaseLoop(ctx, task.ID, id, 15*time.Second)
-
-        s.processTask(ctx, task)
-        cancel()
-    }
-}
+```mermaid
+flowchart TD
+    S[启动 N 个 Worker goroutine] --> L[Worker 循环]
+    L --> C[调用 ClaimNextTask<br/>尝试抢一个 queued 任务]
+    C -->|抢到| R[启动租约续期 loop<br/>每15s 续期一次]
+    C -->|没抢到| W[休眠 2s 后重试]
+    R --> P[执行业务逻辑<br/>processTask]
+    P -->|成功| U[标记任务 succeeded]
+    P -->|失败| F[标记任务 failed]
+    U --> X[取消续期, 释放租约]
+    F --> X
+    W --> L
+    X --> L
 ```
+
+**Worker 生命周期**：
+
+| 阶段 | 动作 | 说明 |
+|------|------|------|
+| 抢任务 | `ClaimNextTask` | 用 SQL `FOR UPDATE SKIP LOCKED` 原子抢任务，租约 45s |
+| 续期 | 每 15s 更新 `lease_expires_at` | 防止任务执行中租约过期被其他 Worker 抢走 |
+| 执行 | `processTask` | 执行 Pipeline 中的每个 Step |
+| 释放 | `cancel()` 停止续期 | 任务结束后释放租约 |
 
 ### 4.2 ClaimNextTask SQL
 
@@ -659,57 +660,38 @@ POST /api/v1/assets/batch
 
 ## 8. Step 间数据传递
 
-Pipeline 中后一个 Step 引用前一个 Step 的输出，Worker 负责传递：
+Pipeline 中后一个 Step 引用前一个 Step 的输出，Worker 用 `stepOutputs` 字典在 Step 间传递数据：
 
-```go
-// Worker 执行 Pipeline 的核心逻辑（伪码）
-func (w *Worker) processTask(ctx context.Context, task *Task) error {
-    stepOutputs := make(map[string]json.RawMessage)  // step_key → output
-
-    for _, step := range task.Steps {
-        select {
-        case <-ctx.Done():
-            return ctx.Err()  // 取消
-        default:
-        }
-
-        // 跳过已完成的 Step（幂等）
-        if step.Status == "succeeded" {
-            stepOutputs[step.StepKey] = step.Output
-            continue
-        }
-
-        // 解析上游依赖
-        input := w.resolveStepInput(step.Input, stepOutputs)
-        // resolveStepInput 将 {{steps.text_to_image.output}} 替换为实际值
-
-        // 调用 AI 网关
-        output, err := w.gateway.Invoke(ctx, GatewayRequest{
-            TaskID:  task.ID,
-            StepID:  step.ID,
-            StepKey: step.StepKey,
-            Model:   step.Model,
-            Input:   input,
-        })
-
-        if err != nil {
-            // 重试逻辑
-            if step.Attempts < step.MaxAttempts {
-                time.Sleep(time.Duration(step.RetryDelaySeconds) * time.Second)
-                continue  // 重新执行本 step
-            }
-            w.markTaskFailed(task, step, err)
-            return err
-        }
-
-        stepOutputs[step.StepKey] = output
-        w.markStepSucceeded(step, output)
-    }
-
-    // 全部完成 → 回写素材
-    return w.createAssets(task, stepOutputs)
-}
+```mermaid
+flowchart TD
+    A[开始处理 Task] --> B[初始化 stepOutputs 字典<br/>step_key → output]
+    B --> C[遍历 Pipeline Steps]
+    C --> D{Step 已完成?}
+    D -->|是| E[从数据库加载 Output<br/>写入 stepOutputs]
+    D -->|否| F{ctx 是否取消?}
+    F -->|已取消| G[终止执行, 返回取消]
+    F -->|正常| H[解析上游依赖<br/>将 {{steps.xxx.output}} 替换为实际值]
+    H --> I[调用 AI 网关执行]
+    I -->|成功| J[写入 stepOutputs<br/>标记 Step succeeded]
+    I -->|失败| K{重试次数 &lt; 上限?}
+    K -->|是| L[按配置间隔等待后重试]
+    K -->|否| M[标记 Task failed]
+    J --> N{还有下一个 Step?}
+    N -->|是| C
+    N -->|否| O[全部完成 → 回写素材]
+    L --> H
+    E --> N
 ```
+
+**核心机制**：
+
+| 机制 | 说明 |
+|------|------|
+| 数据传递 | `{{steps.text_to_image.output}}` 引用前一步输出，Worker 自动替换 |
+| 幂等性 | 已完成的 Step 直接跳过，从 DB 恢复 output |
+| 取消检测 | 每步开始前检查 `ctx.Done()`，及时响应取消信号 |
+| 重试 | 单个 Step 失败不立即中止，按 `MaxAttempts` 和 `RetryDelay` 重试 |
+| 失败标记 | 重试全部耗尽后标记整个 Task 为 failed |
 
 ---
 

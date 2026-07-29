@@ -397,23 +397,30 @@ VisionParser
 
 ### 3.3 上下文窗口管理
 
-```go
-// ConversationManager 的核心逻辑（伪码）
-func (m *ConversationManager) BuildContext(projectID, specID int64, userInput string) (string, error) {
-    const maxTokens = 8000     // 留给上下文的 token 预算
-    const summaryThreshold = 10 // 超过 10 轮对话时自动压缩
+防止对话历史超出模型 token 上限，用**压缩摘要 + 滑动窗口**策略自动管理上下文长度。
 
-    msgs, _ := m.repo.GetRecentMessages(projectID, 50)
+**决策流程**：
 
-    if len(msgs) > summaryThreshold {
-        // 压缩早期消息为摘要
-        summary := m.summarize(msgs[:len(msgs)-summaryThreshold])
-        recent := msgs[len(msgs)-summaryThreshold:]
-        return m.buildPrompt(summary, recent, userInput), nil
-    }
-    return m.buildPrompt(nil, msgs, userInput), nil
-}
+```mermaid
+flowchart TD
+    A[用户发送新消息] --> B[加载最近 50 条历史消息]
+    B --> C{历史消息 &gt; 10 轮?}
+    C -->|否| D[保留全部消息<br/>直接拼入 Prompt]
+    C -->|是| E[前 N-10 轮消息] -->|压缩| F[生成对话摘要]
+    E2[最近 10 轮消息] --> G[保留原文]
+    F --> H[摘要 + 最近10轮 + 新消息<br/>拼入 Prompt]
+    G --> H
+    D --> I[发送给 AI 模型]
+    H --> I
 ```
+
+**关键参数**：
+
+| 参数 | 值 | 说明 |
+|------|-----|------|
+| 上下文 token 预算 | 8000 | 留给上下文的 token 上限 |
+| 压缩触发阈值 | 10 轮 | 超过 10 轮对话时自动压缩早期消息 |
+| 历史加载上限 | 50 条 | 最多从数据库拉取最近 50 条消息 |
 
 ### 3.4 Spec 状态机
 
