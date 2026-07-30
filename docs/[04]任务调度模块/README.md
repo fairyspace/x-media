@@ -511,7 +511,7 @@ flowchart TD
     D -->|是| E[从数据库加载 Output<br/>写入 stepOutputs]
     D -->|否| F{ctx 是否取消?}
     F -->|已取消| G[终止执行, 返回取消]
-    F -->|正常| H[解析上游依赖<br/>将 {{steps.xxx.output}} 替换为实际值]
+    F -->|正常| H["解析上游依赖<br/>将 {{steps.xxx.output}} 替换为实际值"]
     H --> I[调用 AI 网关执行]
     I -->|成功| J[写入 stepOutputs<br/>标记 Step succeeded]
     I -->|失败| K{重试次数 &lt; 上限?}
