@@ -542,7 +542,7 @@ sequenceDiagram
 ```mermaid
 flowchart LR
     subgraph 前端
-        A[React 画布组件<br/>react-flow]
+        A[React 画布组件<br/>infinite-canvas]
     end
 
     subgraph 画布模块
@@ -784,14 +784,13 @@ MVP 阶段 **不处理多用户并发编辑**（项目同一时间只能由一�
 | 后端 A | `pms_canvas_project` 表 CRUD + 视图保存 + 项目中间件                          |
 | 后端 B | `pms_canvas_node` + `pms_canvas_edge` 批量操作（核心难点：事务内批量 UPSERT） |
 | 后端 C | `pms_canvas_snapshot` + spec_extractor（从节点提取 Spec JSON）                |
-| 前端 A | react-flow 画布渲染 + 节点/连线交互 + 视口管理                                |
+| 前端 A | 基于 infinite-canvas 的画布渲染 + 节点/连线交互 + 视口管理                   |
 | 前端 B | AI 生成面板 + 快照补全 UI + 分镜时间线视图                                    |
 | 前端 C | 项目列表 + 画布加载/保存 + WebSocket 实时推送                                 |
 
 ### 7.4 常见踩坑点
 
-1. **前端画布选型**：建议用 **react-flow**（最成熟的 React 画布库），自带节点拖拽、连线、缩放。不要从零写画布，不要用
-   tldraw（那是白板工具，不适合我们的节点-连线模型）。
+1. **前端画布选型**：基于 **[basketikun/infinite-canvas](https://github.com/basketikun/infinite-canvas)** 二次开发（React 实现，自带节点拖拽、连线、缩放、视口恢复），与竞品 open-ai-canvas 共用同一上游。不要从零写画布，也不要用 tldraw（那是白板工具，不适合我们的节点-连线模型）。
 
 2. **批量 UPSERT 的事务**：同一个项目的节点保存操作必须在同一个事务里——不能出现"3 个节点写入了，2 个失败"的情况。用
    `INSERT ... ON CONFLICT (id) DO UPDATE`。

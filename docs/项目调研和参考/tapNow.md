@@ -51,14 +51,14 @@
 └─ 视频生成 & 输出
 ```
 
-| 层级         | 选择                          | 原因               |
-|--------------|-------------------------------|--------------------|
-| **前端**     | React/Vue3 + Canvas/Fabric.js | 无限画布需求       |
-| **后端**     | go/java/rust                  | 异步处理，流式响应 |
-| **存储**     | S3/OSS                        | 大文件存储         |
-| **消息队列** | Redis/RabbitMQ                | 任务队列           |
-| **AI模型**   | Diffusion/LLM API/seedence    | 视频生成           |
-| **数据库**   | PostgreSQL + MongoDB          | 结构化+非结构化    |
+| 层级         | 选择                                     | 原因                       |
+|--------------|------------------------------------------|----------------------------|
+| **前端**     | React + [basketikun/infinite-canvas](https://github.com/basketikun/infinite-canvas) | 直接复用无限画布上游，与竞品 open-ai-canvas 同源 |
+| **后端**     | Go                                       | 异步处理，流式响应         |
+| **存储**     | OSS                                      | 大文件存储                 |
+| **消息队列** | Redis                                    | 任务队列                   |
+| **AI模型**   | Kling / Runway / Sora / ComfyUI Server   | 视频生成（ComfyUI 仅作为自建 SD 工作流渠道，非画布前端） |
+| **数据库**   | PostgreSQL（含 JSONB）                   | 结构化存储（画布节点、Spec 等用 JSONB 扩展） |
 
 ```
 ┌─────────────────────────────────────┐
@@ -102,7 +102,7 @@
 
 ```
 // 前端核心
-- Fabric.js / Konva.js for Canvas
+- 基于 basketikun/infinite-canvas（React 实现，自带节点拖拽/连线/缩放/视口恢复）
 - 支持缩放、拖拽、分层
 - 实时预览
 - 撤销/重做
@@ -166,7 +166,9 @@
 
 ### 4、如果从0到1复刻类似产品，参考的开源项目
 
-#### ✅ComfyUI（最核心参考） **GitHub**: `comfyanonymous/ComfyUI`
+#### ✅ComfyUI（调研对比项，未采用为画布前端） **GitHub**: `comfyanonymous/ComfyUI`
+
+> **澄清**：ComfyUI 在本项目里**不是画布前端选型**。本项目的画布前端直接基于 [basketikun/infinite-canvas](https://github.com/basketikun/infinite-canvas) 开发（见 `[02]画布模块/README.md`）。ComfyUI 在 x-media 中仅作为 **AI 网关层的一个可选渠道**（见 `[06]AI网关模块/README.md`）——用于下发并执行自建 SD 工作流，产出图像/视频素材。两者角色不同：infinite-canvas 是画布 UI 上游，ComfyUI 是模型执行渠道。
 
 ComfyUI 是目前最强大的开源 node-based 生成式 AI 应用，用户可以通过在画布上连接节点来可视化构建复杂的 AI
 工作流，与传统线性界面不同，它对生成过程的每一步都提供完整控制。 [15](https://www.earngenix.com/blog/why-learn-comfyUI)
